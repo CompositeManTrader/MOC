@@ -1,7 +1,7 @@
 """
-MOC TWAP Dashboard — Mesa de Capitales BMV
+MOC TWAP Dashboard v3 — Mesa de Capitales
 Ejecución Market On Close con distribución TWAP por emisora.
-Actualización cada minuto, zona horaria Ciudad de México.
+Reloj en segundos, cálculos cada minuto, zona horaria CDMX.
 """
 
 import streamlit as st
@@ -9,10 +9,11 @@ import pandas as pd
 from datetime import datetime, timedelta, time as dtime
 import pytz
 import time as time_module
+import math
 
-# ─── Config ───
+# ─── Page Config ───
 st.set_page_config(
-    page_title="MOC TWAP",
+    page_title="MOC TWAP Dashboard",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -26,130 +27,287 @@ def now_cdmx():
     return datetime.now(CDMX_TZ)
 
 
-# ─── CSS ───
+# ─── CSS (estilo visual v1 mejorado) ───
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=DM+Sans:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=DM+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap');
 
-html, body, [class*="st-"] { font-family: 'DM Sans', sans-serif; }
+/* ── Base ── */
+html, body, [class*="st-"] {
+    font-family: 'DM Sans', sans-serif;
+}
+code, .stDataFrame, [data-testid="stMetric"] {
+    font-family: 'JetBrains Mono', monospace !important;
+}
 
+/* ── Sidebar ── */
 [data-testid="stSidebar"] {
-    background: linear-gradient(180deg, #0a0f1c 0%, #111827 100%);
+    background: linear-gradient(180deg, #070b14 0%, #0f172a 100%);
 }
-[data-testid="stSidebar"] * { color: #e2e8f0 !important; }
+[data-testid="stSidebar"] * {
+    color: #cbd5e1 !important;
+}
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] h2,
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] h3,
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] h4 {
+    color: #f1f5f9 !important;
+}
 
-.header-bar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    background: #0f172a;
-    border: 1px solid #1e293b;
-    border-radius: 10px;
-    padding: 0.8rem 1.6rem;
+/* ── Fix sidebar collapse button (punto 3) ── */
+[data-testid="stSidebar"] button[kind="header"] {
+    color: #64748b !important;
+    background: transparent !important;
+    border: none !important;
+}
+[data-testid="stSidebar"] button[kind="header"]:hover {
+    color: #38bdf8 !important;
+}
+button[data-testid="stBaseButton-headerNoPadding"] {
+    color: #64748b !important;
+}
+button[data-testid="stBaseButton-headerNoPadding"]:hover {
+    color: #38bdf8 !important;
+}
+/* Hide ugly keyboard_double text, show clean arrow */
+[data-testid="collapsedControl"] {
+    color: #475569 !important;
+    background: #0f172a !important;
+    border: 1px solid #1e293b !important;
+    border-radius: 0 8px 8px 0 !important;
+}
+[data-testid="collapsedControl"]:hover {
+    color: #38bdf8 !important;
+    border-color: #38bdf8 !important;
+}
+
+/* ── Main Header ── */
+.main-header {
+    background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%);
+    border: 1px solid #334155;
+    border-radius: 14px;
+    padding: 1.4rem 2rem;
     margin-bottom: 1.2rem;
-    flex-wrap: wrap;
-    gap: 0.6rem;
-}
-.header-item {
     text-align: center;
-    min-width: 120px;
 }
-.header-value {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 1.25rem;
+.main-header h1 {
+    color: #f8fafc;
+    font-size: 1.8rem;
     font-weight: 700;
-    line-height: 1.2;
+    margin: 0;
+    letter-spacing: -0.5px;
 }
-.header-label {
-    font-size: 0.65rem;
+.main-header p {
+    color: #94a3b8;
+    font-size: 0.9rem;
+    margin: 0.25rem 0 0 0;
+}
+
+/* ── Clock Boxes (v1 style) ── */
+.clock-box {
+    background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+    border: 1px solid #334155;
+    border-radius: 12px;
+    padding: 1.1rem 1rem;
+    text-align: center;
+    margin-bottom: 0.8rem;
+}
+.clock-time {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 2.6rem;
+    font-weight: 700;
+    color: #38bdf8;
+    letter-spacing: 2px;
+    line-height: 1;
+}
+.clock-label {
     color: #64748b;
+    font-size: 0.7rem;
     text-transform: uppercase;
-    letter-spacing: 1.5px;
-    margin-top: 2px;
+    letter-spacing: 2px;
+    margin-top: 0.3rem;
 }
 
-.text-cyan { color: #38bdf8; }
-.text-slate { color: #cbd5e1; }
-.text-green { color: #4ade80; }
-.text-amber { color: #fbbf24; }
-.text-red { color: #f87171; }
-
+/* ── Status Pills ── */
 .status-active {
     display: inline-block;
-    background: #065f4620;
+    background: rgba(6,95,70,0.15);
     border: 1px solid #4ade80;
     color: #4ade80;
-    padding: 0.15rem 0.6rem;
-    border-radius: 16px;
-    font-size: 0.75rem;
+    padding: 0.2rem 0.85rem;
+    border-radius: 20px;
+    font-size: 0.8rem;
     font-weight: 600;
-    animation: pulse 2s ease-in-out infinite;
+    animation: pulse-glow 2s ease-in-out infinite;
 }
 .status-waiting {
     display: inline-block;
-    background: #78350f20;
+    background: rgba(120,53,15,0.15);
     border: 1px solid #fbbf24;
     color: #fbbf24;
-    padding: 0.15rem 0.6rem;
-    border-radius: 16px;
-    font-size: 0.75rem;
+    padding: 0.2rem 0.85rem;
+    border-radius: 20px;
+    font-size: 0.8rem;
     font-weight: 600;
 }
 .status-finished {
     display: inline-block;
-    background: #1e1b4b20;
+    background: rgba(30,27,75,0.15);
     border: 1px solid #818cf8;
     color: #818cf8;
-    padding: 0.15rem 0.6rem;
-    border-radius: 16px;
-    font-size: 0.75rem;
+    padding: 0.2rem 0.85rem;
+    border-radius: 20px;
+    font-size: 0.8rem;
     font-weight: 600;
 }
-@keyframes pulse {
-    0%, 100% { box-shadow: 0 0 0 0 rgba(74,222,128,0.35); }
-    50% { box-shadow: 0 0 0 5px rgba(74,222,128,0); }
+@keyframes pulse-glow {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(74,222,128,0.4); }
+    50% { box-shadow: 0 0 0 6px rgba(74,222,128,0); }
 }
 
-.ventana-text {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 0.85rem;
-    color: #94a3b8;
-    padding: 0.5rem 0.8rem;
+/* ── Progress Bar ── */
+.progress-container {
     background: #1e293b;
-    border-radius: 6px;
-    margin-top: 0.4rem;
-}
-
-div[data-testid="stDataFrame"] table {
-    font-family: 'JetBrains Mono', monospace !important;
-    font-size: 0.95rem !important;
-}
-
-.progress-track {
-    background: #1e293b;
-    border-radius: 6px;
-    height: 8px;
+    border-radius: 8px;
+    height: 10px;
     overflow: hidden;
-    width: 100%;
-    margin-top: 4px;
+    margin: 0.4rem 0;
 }
-.progress-fill {
+.progress-bar {
     height: 100%;
-    border-radius: 6px;
-    transition: width 1s ease;
+    border-radius: 8px;
+    transition: width 1s linear;
+}
+
+/* ── Color Helpers ── */
+.text-green { color: #4ade80; }
+.text-red { color: #f87171; }
+.text-blue { color: #38bdf8; }
+.text-amber { color: #fbbf24; }
+.text-white { color: #f1f5f9; }
+
+/* ── Table Styling ── */
+.moc-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.92rem;
+    margin-top: 0.5rem;
+}
+.moc-table thead th {
+    background: #0f172a;
+    color: #94a3b8;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    padding: 0.7rem 1rem;
+    border-bottom: 2px solid #334155;
+    text-align: right;
+    white-space: nowrap;
+}
+.moc-table thead th:first-child {
+    text-align: left;
+    border-radius: 10px 0 0 0;
+}
+.moc-table thead th:last-child {
+    border-radius: 0 10px 0 0;
+}
+.moc-table tbody td {
+    padding: 0.65rem 1rem;
+    border-bottom: 1px solid #1e293b;
+    text-align: right;
+    color: #e2e8f0;
+    font-weight: 500;
+}
+.moc-table tbody td:first-child {
+    text-align: left;
+    font-weight: 700;
+    color: #f8fafc;
+    font-size: 0.95rem;
+}
+.moc-table tbody tr {
+    background: #0f172a;
+    transition: background 0.15s ease;
+}
+.moc-table tbody tr:hover {
+    background: #1e293b;
+}
+.moc-table tbody tr:last-child td:first-child {
+    border-radius: 0 0 0 10px;
+}
+.moc-table tbody tr:last-child td:last-child {
+    border-radius: 0 0 10px 0;
+}
+
+/* ── Direction Tags ── */
+.tag-compra {
+    display: inline-block;
+    background: rgba(74,222,128,0.12);
+    border: 1px solid #4ade8060;
+    color: #4ade80;
+    padding: 0.1rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    margin-left: 0.4rem;
+    vertical-align: middle;
+}
+.tag-venta {
+    display: inline-block;
+    background: rgba(248,113,113,0.12);
+    border: 1px solid #f8717160;
+    color: #f87171;
+    padding: 0.1rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    margin-left: 0.4rem;
+    vertical-align: middle;
+}
+
+/* ── Saldo Color Classes ── */
+.saldo-ok { color: #4ade80; font-weight: 700; }
+.saldo-warn { color: #fbbf24; font-weight: 700; }
+.saldo-crit { color: #f87171; font-weight: 700; }
+
+/* ── Ventana Info ── */
+.ventana-info {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.82rem;
+    color: #94a3b8;
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 8px;
+    padding: 0.55rem 0.9rem;
+    margin-top: 0.5rem;
+    text-align: center;
+}
+
+/* ── Sidebar Divider ── */
+.sidebar-divider {
+    border: none;
+    border-top: 1px solid #1e293b;
+    margin: 1rem 0;
 }
 </style>
 """, unsafe_allow_html=True)
 
 # ─── Session State ───
 if "emisoras" not in st.session_state:
-    st.session_state.emisoras = {}
+    st.session_state.emisoras = {}  # {ticker: {"compra": int, "venta": int}}
 if "twap_minutes" not in st.session_state:
     st.session_state.twap_minutes = 20
 if "hora_fin" not in st.session_state:
     st.session_state.hora_fin = dtime(15, 0)
-if "last_update" not in st.session_state:
-    st.session_state.last_update = now_cdmx()
+if "last_calc_minute" not in st.session_state:
+    st.session_state.last_calc_minute = -1
+if "cached_df" not in st.session_state:
+    st.session_state.cached_df = None
+if "cached_meta" not in st.session_state:
+    st.session_state.cached_meta = {}
 
 # ─── Sidebar ───
 with st.sidebar:
@@ -157,95 +315,101 @@ with st.sidebar:
 
     st.markdown("#### Duración TWAP")
     mins = st.radio(
-        "min", [20, 30],
+        "Duración",
+        [20, 30],
         index=0 if st.session_state.twap_minutes == 20 else 1,
         horizontal=True,
         label_visibility="collapsed",
+        help="20 min = normal · 30 min = situación especial",
     )
     st.session_state.twap_minutes = mins
 
     st.markdown("#### Hora Fin")
     hora_fin = st.time_input(
-        "Hora fin de ejecución",
+        "Hora fin",
         value=st.session_state.hora_fin,
         step=timedelta(minutes=1),
         label_visibility="collapsed",
     )
     st.session_state.hora_fin = hora_fin
 
-    # Auto-calculate hora inicio
+    # Auto-calc hora inicio
     fin_dt = datetime.combine(datetime.today(), hora_fin)
     inicio_dt = fin_dt - timedelta(minutes=st.session_state.twap_minutes)
     hora_inicio = inicio_dt.time()
 
-    # Validaciones BMV
-    warnings = []
-    if hora_fin < dtime(14, 30) or hora_fin > dtime(15, 0):
-        warnings.append("Hora fin fuera de rango BMV (14:30–15:00)")
-    if hora_inicio < dtime(14, 0):
-        warnings.append("Hora inicio calculada antes de las 14:00")
-
-    for w in warnings:
-        st.warning(w)
-
     st.markdown(f"""
-    <div class="ventana-text">
-        Ventana: {hora_inicio.strftime("%H:%M")} → {hora_fin.strftime("%H:%M")} ({st.session_state.twap_minutes} min)
+    <div class="ventana-info">
+        {hora_inicio.strftime("%H:%M")} → {hora_fin.strftime("%H:%M")} &nbsp;·&nbsp; {st.session_state.twap_minutes} min
     </div>
     """, unsafe_allow_html=True)
 
-    st.markdown("---")
+    st.markdown('<hr class="sidebar-divider">', unsafe_allow_html=True)
+
+    # ── Agregar Emisora ──
     st.markdown("#### ➕ Agregar Emisora")
 
     with st.form("add_emisora", clear_on_submit=True):
         new_ticker = st.text_input("Emisora", placeholder="Ej: AMX").strip().upper()
+        tipo = st.radio(
+            "Tipo de operación",
+            ["Compra", "Venta"],
+            horizontal=True,
+            label_visibility="collapsed",
+        )
         new_titulos = st.number_input(
-            "Títulos a Vender",
+            "Títulos",
             min_value=0, value=0, step=100,
+            help="Cantidad de títulos de la operación",
         )
         submitted = st.form_submit_button("Agregar", use_container_width=True)
         if submitted and new_ticker and new_titulos > 0:
-            if new_ticker in st.session_state.emisoras:
-                st.session_state.emisoras[new_ticker] += new_titulos
+            if new_ticker not in st.session_state.emisoras:
+                st.session_state.emisoras[new_ticker] = {"compra": 0, "venta": 0}
+            if tipo == "Compra":
+                st.session_state.emisoras[new_ticker]["compra"] += new_titulos
             else:
-                st.session_state.emisoras[new_ticker] = new_titulos
+                st.session_state.emisoras[new_ticker]["venta"] += new_titulos
             st.rerun()
 
+    # ── Eliminar ──
     if st.session_state.emisoras:
+        st.markdown('<hr class="sidebar-divider">', unsafe_allow_html=True)
         st.markdown("#### 🗑️ Eliminar")
         del_ticker = st.selectbox(
-            "Emisora a eliminar",
-            list(st.session_state.emisoras.keys()),
+            "Emisora", list(st.session_state.emisoras.keys()),
             label_visibility="collapsed",
         )
-        if st.button("Eliminar", use_container_width=True):
-            del st.session_state.emisoras[del_ticker]
-            st.rerun()
-        if st.button("Limpiar Todo", use_container_width=True, type="secondary"):
-            st.session_state.emisoras = {}
-            st.rerun()
+        col_del1, col_del2 = st.columns(2)
+        with col_del1:
+            if st.button("Eliminar", use_container_width=True):
+                del st.session_state.emisoras[del_ticker]
+                st.rerun()
+        with col_del2:
+            if st.button("Limpiar", use_container_width=True, type="secondary"):
+                st.session_state.emisoras = {}
+                st.rerun()
 
 
-# ─── Cálculos TWAP ───
-def compute_twap(emisoras: dict, twap_minutes: int, hora_inicio: dtime, hora_fin: dtime):
+# ─── TWAP Calculation ───
+def compute_twap(emisoras: dict, twap_minutes: int, h_inicio: dtime, h_fin: dtime):
     """
-    Calcula TWAP por emisora.
+    Calcula distribución TWAP por emisora.
 
-    Retorna:
-        df: DataFrame con columnas de ejecución
-        progress: float 0-1
-        status: 'waiting' | 'active' | 'finished'
-        remaining_secs: segundos restantes
-        ahora: datetime actual CDMX
+    Posición neta = |compra - venta|
+    Dirección = Compra si compra > venta, Venta si venta > compra
+    Títulos/min = posición neta / minutos totales
+    Deberías llevar = títulos/min × minutos transcurridos
+    Faltan = posición neta - deberías llevar
     """
     ahora = now_cdmx()
     today = ahora.date()
 
-    dt_inicio = CDMX_TZ.localize(datetime.combine(today, hora_inicio))
-    dt_fin = CDMX_TZ.localize(datetime.combine(today, hora_fin))
+    dt_inicio = CDMX_TZ.localize(datetime.combine(today, h_inicio))
+    dt_fin = CDMX_TZ.localize(datetime.combine(today, h_fin))
 
     total_seconds = max((dt_fin - dt_inicio).total_seconds(), 1)
-    elapsed = max(0, min((ahora - dt_inicio).total_seconds(), total_seconds))
+    elapsed = max(0.0, min((ahora - dt_inicio).total_seconds(), total_seconds))
     remaining = total_seconds - elapsed
     progress = elapsed / total_seconds
 
@@ -257,153 +421,193 @@ def compute_twap(emisoras: dict, twap_minutes: int, hora_inicio: dtime, hora_fin
         status = "active"
 
     total_minutes = total_seconds / 60.0
-    remaining_minutes = remaining / 60.0
+    elapsed_minutes = elapsed / 60.0
 
     rows = []
-    for ticker, titulos in emisoras.items():
-        titulos_min = titulos / total_minutes if total_minutes > 0 else 0
+    for ticker, ops in emisoras.items():
+        compra = ops["compra"]
+        venta = ops["venta"]
+        neta = compra - venta
+        posicion = abs(neta)
+        es_compra = neta > 0  # net long → needs to sell; net short → needs to buy
+
+        titulos_min = posicion / total_minutes if total_minutes > 0 else 0
 
         if status == "finished":
-            saldo = 0
+            deberias_llevar = posicion
+            faltan = 0
         elif status == "waiting":
-            saldo = titulos
+            deberias_llevar = 0
+            faltan = posicion
         else:
-            saldo = remaining_minutes * titulos_min
-
-        saldo = round(saldo)
-        ejecutado = titulos - saldo
+            deberias_llevar = elapsed_minutes * titulos_min
+            faltan = posicion - deberias_llevar
 
         rows.append({
-            "Emisora": ticker,
-            "Posición (Títulos)": titulos,
-            "Títulos/min": round(titulos_min),
-            "Ejecutado (Títulos)": ejecutado,
-            "Saldo (Títulos)": saldo,
+            "ticker": ticker,
+            "compra": compra,
+            "venta": venta,
+            "es_compra": es_compra,
+            "posicion": posicion,
+            "titulos_min": round(titulos_min),
+            "deberias_llevar": round(deberias_llevar),
+            "faltan": round(faltan),
         })
 
-    cols = ["Emisora", "Posición (Títulos)", "Títulos/min", "Ejecutado (Títulos)", "Saldo (Títulos)"]
-    df = pd.DataFrame(rows, columns=cols) if rows else pd.DataFrame(columns=cols)
-
-    return df, progress, status, remaining, ahora
+    return rows, progress, status, remaining, ahora, dt_inicio, dt_fin
 
 
-# ─── Compute ───
-df, progress, status, remaining_secs, ahora = compute_twap(
-    st.session_state.emisoras,
-    st.session_state.twap_minutes,
-    hora_inicio,
-    hora_fin,
+# ─── Determine if we need to recalculate ───
+ahora = now_cdmx()
+current_minute = ahora.minute + ahora.hour * 60
+
+needs_recalc = (
+    current_minute != st.session_state.last_calc_minute
+    or st.session_state.cached_df is None
 )
 
-# ─── Header Bar ───
-r_min = int(remaining_secs // 60)
-r_sec = int(remaining_secs % 60)
-pct = progress * 100
+if needs_recalc:
+    rows, progress, status, remaining, ahora, dt_inicio, dt_fin = compute_twap(
+        st.session_state.emisoras,
+        st.session_state.twap_minutes,
+        hora_inicio,
+        hora_fin,
+    )
+    st.session_state.last_calc_minute = current_minute
+    st.session_state.cached_df = rows
+    st.session_state.cached_meta = {
+        "progress": progress,
+        "status": status,
+        "remaining": remaining,
+        "ahora": ahora,
+    }
+else:
+    rows = st.session_state.cached_df
+    progress = st.session_state.cached_meta["progress"]
+    status = st.session_state.cached_meta["status"]
+    remaining = st.session_state.cached_meta["remaining"]
 
-time_color = "text-green" if remaining_secs > 300 else ("text-amber" if remaining_secs > 60 else "text-red")
-bar_color = "#4ade80" if pct < 80 else ("#fbbf24" if pct < 95 else "#f87171")
+# Always get fresh time for the clock display (seconds tick)
+ahora = now_cdmx()
 
-status_html = {
-    "waiting": '<span class="status-waiting">EN ESPERA</span>',
-    "active": '<span class="status-active">EN VIVO</span>',
-    "finished": '<span class="status-finished">FINALIZADO</span>',
-}[status]
-
-st.markdown(f"""
-<div class="header-bar">
-    <div class="header-item">
-        <div class="header-value text-cyan">{ahora.strftime("%H:%M:%S")}</div>
-        <div class="header-label">CDMX</div>
-    </div>
-    <div class="header-item">
-        {status_html}
-        <div class="header-label">{hora_inicio.strftime("%H:%M")} → {hora_fin.strftime("%H:%M")}</div>
-    </div>
-    <div class="header-item">
-        <div class="header-value {time_color}">{r_min:02d}:{r_sec:02d}</div>
-        <div class="header-label">Restante</div>
-    </div>
-    <div class="header-item" style="min-width:160px;">
-        <div class="header-value text-slate">{pct:.1f}%</div>
-        <div class="progress-track"><div class="progress-fill" style="width:{pct}%;background:{bar_color};"></div></div>
-        <div class="header-label">Avance</div>
-    </div>
+# ─── Header ───
+st.markdown("""
+<div class="main-header">
+    <h1>📊 MOC TWAP Dashboard</h1>
+    <p>Market On Close · Time-Weighted Average Price · Mesa de Capitales</p>
 </div>
 """, unsafe_allow_html=True)
 
-# ─── Tabla Principal ───
-if not df.empty:
+# ─── Clock Row (4 boxes, v1 style) ───
+col_clock, col_status, col_remain, col_progress = st.columns([2, 1.8, 1.5, 2])
 
-    def color_saldo(val):
-        """
-        Colorea celda de saldo según % pendiente respecto a posición.
-        Verde: ≤20% pendiente (on schedule)
-        Amarillo: 20-50% pendiente
-        Rojo: >50% pendiente
-        """
-        return ""
+with col_clock:
+    st.markdown(f"""
+    <div class="clock-box">
+        <div class="clock-time">{ahora.strftime("%H:%M:%S")}</div>
+        <div class="clock-label">Ciudad de México</div>
+    </div>
+    """, unsafe_allow_html=True)
 
-    def row_saldo_color(row):
-        """Aplica color al saldo según porcentaje restante."""
-        pos = row["Posición (Títulos)"]
-        saldo = row["Saldo (Títulos)"]
-        if pos == 0:
+with col_status:
+    status_html = {
+        "waiting": '<span class="status-waiting">⏳ EN ESPERA</span>',
+        "active": '<span class="status-active">🟢 EN VIVO</span>',
+        "finished": '<span class="status-finished">✅ FINALIZADO</span>',
+    }[status]
+    st.markdown(f"""
+    <div class="clock-box">
+        <div style="margin-bottom:0.4rem;">{status_html}</div>
+        <div class="clock-label">{hora_inicio.strftime("%H:%M")} → {hora_fin.strftime("%H:%M")} · {st.session_state.twap_minutes} min</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+with col_remain:
+    r_min = int(remaining // 60)
+    r_sec = int(remaining % 60)
+    tc = "text-green" if remaining > 300 else ("text-amber" if remaining > 60 else "text-red")
+    st.markdown(f"""
+    <div class="clock-box">
+        <div class="clock-time {tc}" style="font-size:2.2rem;">{r_min:02d}:{r_sec:02d}</div>
+        <div class="clock-label">Tiempo Restante</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+with col_progress:
+    pct = progress * 100
+    bc = "#4ade80" if pct < 80 else ("#fbbf24" if pct < 95 else "#f87171")
+    st.markdown(f"""
+    <div class="clock-box">
+        <div class="clock-time text-white" style="font-size:2.2rem;">{pct:.1f}%</div>
+        <div class="progress-container">
+            <div class="progress-bar" style="width:{pct}%;background:{bc};"></div>
+        </div>
+        <div class="clock-label">Avance de Ejecución</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+# ─── Table ───
+if rows:
+    # Build HTML table for full visual control
+    table_html = """
+    <table class="moc-table">
+        <thead>
+            <tr>
+                <th style="text-align:left;">Emisora</th>
+                <th>Posición Inicial</th>
+                <th>Títulos/min</th>
+                <th>Deberías Llevar</th>
+                <th>Faltan</th>
+            </tr>
+        </thead>
+        <tbody>
+    """
+
+    for r in rows:
+        # Direction tag
+        if r["es_compra"]:
+            tag = '<span class="tag-compra">COMPRA</span>'
+        else:
+            tag = '<span class="tag-venta">VENTA</span>'
+
+        # If flat (both zero or equal)
+        if r["posicion"] == 0:
+            tag = ""
+
+        # Saldo color
+        if r["posicion"] > 0:
+            ratio = r["faltan"] / r["posicion"]
+        else:
             ratio = 0
-        else:
-            ratio = saldo / pos
 
-        styles = [""] * len(row)
-        saldo_idx = row.index.get_loc("Saldo (Títulos)")
         if ratio <= 0.20:
-            styles[saldo_idx] = "color: #4ade80; font-weight: 700;"
+            saldo_class = "saldo-ok"
         elif ratio <= 0.50:
-            styles[saldo_idx] = "color: #fbbf24; font-weight: 700;"
+            saldo_class = "saldo-warn"
         else:
-            styles[saldo_idx] = "color: #f87171; font-weight: 700;"
-        return styles
+            saldo_class = "saldo-crit"
 
-    styled = (
-        df.style
-        .apply(row_saldo_color, axis=1)
-        .format({
-            "Posición (Títulos)": "{:,}",
-            "Títulos/min": "{:,}",
-            "Ejecutado (Títulos)": "{:,}",
-            "Saldo (Títulos)": "{:,}",
-        })
-    )
+        table_html += f"""
+            <tr>
+                <td>{r["ticker"]} {tag}</td>
+                <td>{r["posicion"]:,}</td>
+                <td>{r["titulos_min"]:,}</td>
+                <td>{r["deberias_llevar"]:,}</td>
+                <td class="{saldo_class}">{r["faltan"]:,}</td>
+            </tr>
+        """
 
-    st.dataframe(
-        styled,
-        use_container_width=True,
-        hide_index=True,
-        height=min(600, 55 + len(df) * 42),
-    )
+    table_html += """
+        </tbody>
+    </table>
+    """
+
+    st.markdown(table_html, unsafe_allow_html=True)
+
 else:
-    st.info("Agrega emisoras en el panel lateral para iniciar.")
+    st.markdown("")
+    st.info("👈 Agrega emisoras en el panel lateral para comenzar.")
 
-# ─── TWAP Reference ───
-with st.expander("Metodología TWAP"):
-    st.markdown("""
-    **Posición** = Títulos a vender (ingresados por emisora)
-
-    **Títulos/min** = Posición ÷ Minutos totales de ventana
-
-    **Saldo** = Títulos/min × Minutos restantes
-
-    **Ejecutado** = Posición − Saldo
-
-    Colores de saldo: 🟢 ≤20% pendiente · 🟡 20-50% · 🔴 >50%
-    """)
-
-# ─── Refresh cada minuto ───
-current = now_cdmx()
-delta = (current - st.session_state.last_update).total_seconds()
-if delta >= 60:
-    st.session_state.last_update = current
-    st.rerun()
-else:
-    wait = 60 - delta
-    time_module.sleep(wait)
-    st.session_state.last_update = now_cdmx()
-    st.rerun()
+# ─── Auto-refresh: sleep 1 second for clock, rerun ───
+time_module.sleep(1)
+st.rerun()

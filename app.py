@@ -548,64 +548,45 @@ with col_progress:
 
 # ─── Table ───
 if rows:
-    # Build HTML table for full visual control
-    table_html = """
-    <table class="moc-table">
-        <thead>
-            <tr>
-                <th style="text-align:left;">Emisora</th>
-                <th>Posición Inicial</th>
-                <th>Títulos/min</th>
-                <th>Deberías Llevar</th>
-                <th>Faltan</th>
-            </tr>
-        </thead>
-        <tbody>
-    """
+    parts = []
+    parts.append('<table class="moc-table"><thead><tr>')
+    parts.append('<th style="text-align:left;">Emisora</th>')
+    parts.append('<th>Posición Inicial</th>')
+    parts.append('<th>Títulos/min</th>')
+    parts.append('<th>Deberías Llevar</th>')
+    parts.append('<th>Faltan</th>')
+    parts.append('</tr></thead><tbody>')
 
     for r in rows:
-        # Direction tag
-        if r["es_compra"]:
-            tag = '<span class="tag-compra">COMPRA</span>'
-        else:
-            tag = '<span class="tag-venta">VENTA</span>'
-
-        # If flat (both zero or equal)
         if r["posicion"] == 0:
             tag = ""
-
-        # Saldo color
-        if r["posicion"] > 0:
-            ratio = r["faltan"] / r["posicion"]
+        elif r["es_compra"]:
+            tag = ' <span class="tag-compra">COMPRA</span>'
         else:
-            ratio = 0
+            tag = ' <span class="tag-venta">VENTA</span>'
 
+        ratio = r["faltan"] / r["posicion"] if r["posicion"] > 0 else 0
         if ratio <= 0.20:
-            saldo_class = "saldo-ok"
+            sc = "saldo-ok"
         elif ratio <= 0.50:
-            saldo_class = "saldo-warn"
+            sc = "saldo-warn"
         else:
-            saldo_class = "saldo-crit"
+            sc = "saldo-crit"
 
-        table_html += f"""
-            <tr>
-                <td>{r["ticker"]} {tag}</td>
-                <td>{r["posicion"]:,}</td>
-                <td>{r["titulos_min"]:,}</td>
-                <td>{r["deberias_llevar"]:,}</td>
-                <td class="{saldo_class}">{r["faltan"]:,}</td>
-            </tr>
-        """
+        parts.append(
+            f'<tr>'
+            f'<td>{r["ticker"]}{tag}</td>'
+            f'<td>{r["posicion"]:,}</td>'
+            f'<td>{r["titulos_min"]:,}</td>'
+            f'<td>{r["deberias_llevar"]:,}</td>'
+            f'<td class="{sc}">{r["faltan"]:,}</td>'
+            f'</tr>'
+        )
 
-    table_html += """
-        </tbody>
-    </table>
-    """
-
-    st.markdown(table_html, unsafe_allow_html=True)
+    parts.append('</tbody></table>')
+    st.markdown("".join(parts), unsafe_allow_html=True)
 
 else:
-    st.markdown("")
     st.info("👈 Agrega emisoras en el panel lateral para comenzar.")
 
 # ─── Auto-refresh: sleep 1 second for clock, rerun ───

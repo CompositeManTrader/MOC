@@ -1,15 +1,15 @@
 """
 MOC TWAP Dashboard v3 — Mesa de Capitales
 Ejecución Market On Close con distribución TWAP por emisora.
-Reloj en segundos, cálculos cada minuto, zona horaria CDMX.
+Reloj en segundos (autorefresh no-bloqueante), cálculos cada minuto, CDMX.
+Emisoras persisten en URL (query params) → sobreviven refresh del navegador.
 """
 
 import streamlit as st
-import pandas as pd
+from streamlit_autorefresh import st_autorefresh
+import json
 from datetime import datetime, timedelta, time as dtime
 import pytz
-import time as time_module
-import math
 
 # ─── Page Config ───
 st.set_page_config(
@@ -27,12 +27,14 @@ def now_cdmx():
     return datetime.now(CDMX_TZ)
 
 
-# ─── CSS (estilo visual v1 mejorado) ───
+# ─── Auto-refresh cada 1 segundo (NO bloqueante) ───
+st_autorefresh(interval=1000, limit=None, key="moc_refresh")
+
+# ─── CSS ───
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=DM+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap');
 
-/* ── Base ── */
 html, body, [class*="st-"] {
     font-family: 'DM Sans', sans-serif;
 }
@@ -53,7 +55,7 @@ code, .stDataFrame, [data-testid="stMetric"] {
     color: #f1f5f9 !important;
 }
 
-/* ── Fix sidebar collapse button (punto 3) ── */
+/* ── Fix sidebar collapse button ── */
 [data-testid="stSidebar"] button[kind="header"] {
     color: #64748b !important;
     background: transparent !important;
@@ -68,7 +70,6 @@ button[data-testid="stBaseButton-headerNoPadding"] {
 button[data-testid="stBaseButton-headerNoPadding"]:hover {
     color: #38bdf8 !important;
 }
-/* Hide ugly keyboard_double text, show clean arrow */
 [data-testid="collapsedControl"] {
     color: #475569 !important;
     background: #0f172a !important;
@@ -102,7 +103,7 @@ button[data-testid="stBaseButton-headerNoPadding"]:hover {
     margin: 0.25rem 0 0 0;
 }
 
-/* ── Clock Boxes (v1 style) ── */
+/* ── Clock Boxes ── */
 .clock-box {
     background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
     border: 1px solid #334155;
@@ -185,7 +186,7 @@ button[data-testid="stBaseButton-headerNoPadding"]:hover {
 .text-amber { color: #fbbf24; }
 .text-white { color: #f1f5f9; }
 
-/* ── Table Styling ── */
+/* ── Table ── */
 .moc-table {
     width: 100%;
     border-collapse: separate;
@@ -286,7 +287,6 @@ button[data-testid="stBaseButton-headerNoPadding"]:hover {
     text-align: center;
 }
 
-/* ── Sidebar Divider ── */
 .sidebar-divider {
     border: none;
     border-top: 1px solid #1e293b;
@@ -295,19 +295,40 @@ button[data-testid="stBaseButton-headerNoPadding"]:hover {
 </style>
 """, unsafe_allow_html=True)
 
-# ─── Session State ───
+
+# ═══════════════════════════════════════════════════════════
+# Persistencia: emisoras en query_params (sobreviven refresh)
+# ═══════════════════════════════════════════════════════════
+
+def save_emisoras(emisoras: dict):
+    """Guarda emisoras en la URL como query param."""
+    if emisoras:
+        st.query_params["e"] = json.dumps(emisoras)
+    else:
+        if "e" in st.query_params:
+            del st.query_params["e"]
+
+
+def load_emisoras() -> dict:
+    """Restaura emisoras desde la URL."""
+    raw = st.query_params.get("e", "")
+    if raw:
+        try:
+            return json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            return {}
+    return {}
+
+
+# ─── Session State (restaurar de URL al inicio) ───
 if "emisoras" not in st.session_state:
-    st.session_state.emisoras = {}  # {ticker: {"compra": int, "venta": int}}
+    st.session_state.emisoras = load_emisoras()
 if "twap_minutes" not in st.session_state:
     st.session_state.twap_minutes = 20
 if "hora_fin" not in st.session_state:
     st.session_state.hora_fin = dtime(15, 0)
 if "last_calc_minute" not in st.session_state:
     st.session_state.last_calc_minute = -1
-if "cached_df" not in st.session_state:
-    st.session_state.cached_df = None
-if "cached_meta" not in st.session_state:
-    st.session_state.cached_meta = {}
 
 # ─── Sidebar ───
 with st.sidebar:
@@ -333,7 +354,6 @@ with st.sidebar:
     )
     st.session_state.hora_fin = hora_fin
 
-    # Auto-calc hora inicio
     fin_dt = datetime.combine(datetime.today(), hora_fin)
     inicio_dt = fin_dt - timedelta(minutes=st.session_state.twap_minutes)
     hora_inicio = inicio_dt.time()
@@ -346,7 +366,6 @@ with st.sidebar:
 
     st.markdown('<hr class="sidebar-divider">', unsafe_allow_html=True)
 
-    # ── Agregar Emisora ──
     st.markdown("#### ➕ Agregar Emisora")
 
     with st.form("add_emisora", clear_on_submit=True):
@@ -370,9 +389,9 @@ with st.sidebar:
                 st.session_state.emisoras[new_ticker]["compra"] += new_titulos
             else:
                 st.session_state.emisoras[new_ticker]["venta"] += new_titulos
+            save_emisoras(st.session_state.emisoras)
             st.rerun()
 
-    # ── Eliminar ──
     if st.session_state.emisoras:
         st.markdown('<hr class="sidebar-divider">', unsafe_allow_html=True)
         st.markdown("#### 🗑️ Eliminar")
@@ -384,23 +403,22 @@ with st.sidebar:
         with col_del1:
             if st.button("Eliminar", use_container_width=True):
                 del st.session_state.emisoras[del_ticker]
+                save_emisoras(st.session_state.emisoras)
                 st.rerun()
         with col_del2:
             if st.button("Limpiar", use_container_width=True, type="secondary"):
                 st.session_state.emisoras = {}
+                save_emisoras(st.session_state.emisoras)
                 st.rerun()
 
 
 # ─── TWAP Calculation ───
 def compute_twap(emisoras: dict, twap_minutes: int, h_inicio: dtime, h_fin: dtime):
     """
-    Calcula distribución TWAP por emisora.
-
     Posición neta = |compra - venta|
-    Dirección = Compra si compra > venta, Venta si venta > compra
-    Títulos/min = posición neta / minutos totales
+    Títulos/min = posición / minutos totales
     Deberías llevar = títulos/min × minutos transcurridos
-    Faltan = posición neta - deberías llevar
+    Faltan = posición - deberías llevar
     """
     ahora = now_cdmx()
     today = ahora.date()
@@ -429,7 +447,7 @@ def compute_twap(emisoras: dict, twap_minutes: int, h_inicio: dtime, h_fin: dtim
         venta = ops["venta"]
         neta = compra - venta
         posicion = abs(neta)
-        es_compra = neta > 0  # net long → needs to sell; net short → needs to buy
+        es_compra = neta > 0
 
         titulos_min = posicion / total_minutes if total_minutes > 0 else 0
 
@@ -445,8 +463,6 @@ def compute_twap(emisoras: dict, twap_minutes: int, h_inicio: dtime, h_fin: dtim
 
         rows.append({
             "ticker": ticker,
-            "compra": compra,
-            "venta": venta,
             "es_compra": es_compra,
             "posicion": posicion,
             "titulos_min": round(titulos_min),
@@ -454,40 +470,37 @@ def compute_twap(emisoras: dict, twap_minutes: int, h_inicio: dtime, h_fin: dtim
             "faltan": round(faltan),
         })
 
-    return rows, progress, status, remaining, ahora, dt_inicio, dt_fin
+    return rows, progress, status, remaining
 
 
-# ─── Determine if we need to recalculate ───
+# ─── Compute ───
 ahora = now_cdmx()
-current_minute = ahora.minute + ahora.hour * 60
+current_minute = ahora.hour * 60 + ahora.minute
 
 needs_recalc = (
     current_minute != st.session_state.last_calc_minute
-    or st.session_state.cached_df is None
+    or "cached_rows" not in st.session_state
 )
 
 if needs_recalc:
-    rows, progress, status, remaining, ahora, dt_inicio, dt_fin = compute_twap(
+    rows, progress, status, remaining = compute_twap(
         st.session_state.emisoras,
         st.session_state.twap_minutes,
         hora_inicio,
         hora_fin,
     )
     st.session_state.last_calc_minute = current_minute
-    st.session_state.cached_df = rows
-    st.session_state.cached_meta = {
-        "progress": progress,
-        "status": status,
-        "remaining": remaining,
-        "ahora": ahora,
-    }
+    st.session_state.cached_rows = rows
+    st.session_state.cached_progress = progress
+    st.session_state.cached_status = status
+    st.session_state.cached_remaining = remaining
 else:
-    rows = st.session_state.cached_df
-    progress = st.session_state.cached_meta["progress"]
-    status = st.session_state.cached_meta["status"]
-    remaining = st.session_state.cached_meta["remaining"]
+    rows = st.session_state.cached_rows
+    progress = st.session_state.cached_progress
+    status = st.session_state.cached_status
+    remaining = st.session_state.cached_remaining
 
-# Always get fresh time for the clock display (seconds tick)
+# Fresh time for clock
 ahora = now_cdmx()
 
 # ─── Header ───
@@ -498,7 +511,7 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# ─── Clock Row (4 boxes, v1 style) ───
+# ─── Clock Row ───
 col_clock, col_status, col_remain, col_progress = st.columns([2, 1.8, 1.5, 2])
 
 with col_clock:
@@ -588,7 +601,3 @@ if rows:
 
 else:
     st.info("👈 Agrega emisoras en el panel lateral para comenzar.")
-
-# ─── Auto-refresh: sleep 1 second for clock, rerun ───
-time_module.sleep(1)
-st.rerun()
